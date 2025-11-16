@@ -1,0 +1,79 @@
+### Spring Boot Application - API Tests
+
+@baseUrl = http://localhost:8080
+
+### Health Check
+GET {{baseUrl}}/api/health
+
+### Hello Endpoint
+GET {{baseUrl}}/api/hello
+
+### Generate Embedding - Simple Example
+POST {{baseUrl}}/api/embedding
+Content-Type: application/json
+
+{
+  "sentence": "Hello, how are you?"
+}
+
+### Generate Embedding - Longer Text
+POST {{baseUrl}}/api/embedding
+Content-Type: application/json
+
+{
+  "sentence": "The quick brown fox jumps over the lazy dog."
+}
+
+### Generate Embedding - Technical Text
+POST {{baseUrl}}/api/embedding
+Content-Type: application/json
+
+{
+  "sentence": "Machine learning models require large amounts of training data to achieve good performance."
+}
+
+### Generate Embedding - Question
+POST {{baseUrl}}/api/embedding
+Content-Type: application/json
+
+{
+  "sentence": "What is the meaning of life?"
+}
+
+### Test Encode/Decode (check console logs for output)
+POST {{baseUrl}}/api/embedding/test
+Content-Type: application/json
+
+{
+  "sentence": "Hello, how are you?"
+}
+
+### Test Encode/Decode - Complex Sentence
+POST {{baseUrl}}/api/embedding/test
+Content-Type: application/json
+
+{
+  "sentence": "Spring Boot makes it easy to create stand-alone, production-grade Spring based Applications."
+}
+
+### Match Words - Simple
+POST {{baseUrl}}/api/embedding/match-words
+Content-Type: application/json
+
+{
+  "sentence": "The quick brown fox jumps over the lazy dog",
+  "targets": ["animal", "speed", "color", "sleepy"],
+  "threshold": 0.3,
+  "topK": 2
+}
+
+### Match Words - Technical
+POST {{baseUrl}}/api/embedding/match-words
+Content-Type: application/json
+
+{
+  "sentence": "Neural networks learn hierarchical representations from data.",
+  "targets": ["biology", "learning", "representation", "data"],
+  "threshold": 0.55,
+  "topK": 3
+}
