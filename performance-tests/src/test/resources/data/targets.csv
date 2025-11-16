@@ -1,0 +1,14 @@
+targets,threshold,topK,size
+"[""animal"", ""speed""]",0.3,2,small
+"[""color"", ""movement"", ""sleepy""]",0.35,2,small
+"[""learning"", ""data""]",0.4,3,small
+"[""weather"", ""temperature""]",0.3,2,small
+"[""animal"", ""speed"", ""color"", ""sleepy"", ""movement""]",0.3,3,medium
+"[""learning"", ""training"", ""model"", ""algorithm"", ""neural""]",0.4,4,medium
+"[""distributed"", ""system"", ""network"", ""latency"", ""fault""]",0.35,3,medium
+"[""performance"", ""optimization"", ""bottleneck"", ""resource"", ""efficient""]",0.4,4,medium
+"[""technology"", ""software"", ""engineering"", ""development"", ""architecture""]",0.35,3,medium
+"[""artificial"", ""intelligence"", ""machine"", ""learning"", ""neural"", ""network"", ""deep"", ""model"", ""training"", ""data""]",0.4,5,large
+"[""language"", ""processing"", ""semantic"", ""embedding"", ""search"", ""retrieval"", ""natural"", ""understanding"", ""context"", ""meaning""]",0.45,5,large
+"[""microservices"", ""architecture"", ""container"", ""orchestration"", ""kubernetes"", ""distributed"", ""scalable"", ""resilience"", ""observability"", ""deployment""]",0.4,4,large
+"[""biology"", ""chemistry"", ""physics"", ""mathematics"", ""science"", ""research"", ""experiment"", ""theory"", ""analysis"", ""discovery""]",0.35,4,large

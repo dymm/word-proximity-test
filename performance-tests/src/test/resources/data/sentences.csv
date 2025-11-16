@@ -1,0 +1,14 @@
+sentence,category
+The quick brown fox jumps over the lazy dog,short
+A cat sits on a mat near the window,short
+Machine learning models require training data,short
+The weather is sunny and warm today,short
+Programming languages have different syntax rules,short
+Neural networks learn hierarchical representations from large datasets using backpropagation algorithms,medium
+Spring Boot makes it easy to create stand-alone production-grade Spring based Applications that you can just run,medium
+The advancement of artificial intelligence has transformed how we approach complex computational problems in modern software,medium
+Distributed systems require careful consideration of network latency consistency guarantees and fault tolerance mechanisms,medium
+Performance optimization involves profiling bottlenecks analyzing resource usage and implementing efficient algorithms and data structures,medium
+"In the rapidly evolving landscape of modern software engineering, the integration of machine learning models into production systems has become increasingly complex, requiring sophisticated infrastructure for model serving, monitoring, and continuous retraining pipelines that can handle petabytes of data while maintaining low latency and high availability across distributed computing environments with heterogeneous hardware accelerators",long
+"The intersection of natural language processing and embedding-based semantic search has revolutionized information retrieval systems, enabling applications to understand context, nuance, and implicit meaning beyond simple keyword matching, thereby facilitating more intuitive human-computer interactions across diverse domains including question answering, document classification, sentiment analysis, and cross-lingual understanding",long
+"Building scalable microservices architectures demands comprehensive understanding of containerization technologies, orchestration platforms, service mesh patterns, observability frameworks, and resilience engineering principles to ensure that individual components can be developed, deployed, and maintained independently while preserving system-wide coherence, reliability, and performance under varying load conditions and failure scenarios",long
