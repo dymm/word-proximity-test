@@ -94,54 +94,27 @@ public class EmbeddingService {
      * @throws OrtException ONNX runtime exception
      */
     public float[] getSentenceEmbedding(String sentence) throws OrtException {
-        // Tokenize input sentence, returning token IDs and masks
+        // Step 1: Tokenize the input sentence using HuggingFace tokenizer
         Encoding encoding = tokenizer.encode(sentence);
 
-        // Pad or truncate token arrays to length 256
+        // Step 2: Prepare input arrays with fixed sequence length
         long[] inputIds = padOrTruncate(encoding.getIds(), 256);
         long[] attentionMask = padOrTruncate(encoding.getAttentionMask(), 256);
-        // tokenTypeIds usually zero for single sentence inputs
-        long[] tokenTypeIds = new long[256];
+        long[] tokenTypeIds = new long[256]; // All zeros for single sentence
 
-        // Define input tensor shape: batch size 1, sequence length 256
-        long[] inputShape = new long[]{1, 256};
+        // Step 3: Run ONNX inference to get raw token embeddings
+        float[] flatEmbeddings = runInference(inputIds, attentionMask, tokenTypeIds);
 
-        // Create OnnxTensor inputs using LongBuffer for efficient memory usage
-        try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(inputIds), inputShape);
-             OnnxTensor attentionMaskTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(attentionMask), inputShape);
-             OnnxTensor tokenTypeIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(tokenTypeIds), inputShape)) {
+        // Step 4: Reshape flat array to 2D token embeddings matrix
+        int sequenceLength = 256;
+        int embeddingDim = flatEmbeddings.length / sequenceLength;
+        float[][] tokenEmbeddings = extractTokenEmbeddings(flatEmbeddings, sequenceLength, embeddingDim);
 
-            // Map input names to tensors as expected by ONNX model
-            Map<String, OnnxTensor> inputs = new HashMap<>();
-            inputs.put("input_ids", inputIdsTensor);
-            inputs.put("attention_mask", attentionMaskTensor);
-            inputs.put("token_type_ids", tokenTypeIdsTensor);
+        // Step 5: Apply mean pooling over tokens (considers attention mask)
+        float[] pooled = meanPooling(tokenEmbeddings, attentionMask);
 
-            // Run inference session
-            try (OrtSession.Result result = session.run(inputs)) {
-                // Get output tensor (usually first output)
-                OnnxValue output = result.get(0);
-
-                // Retrieve output as flat float array from FloatBuffer
-                float[] flatArray = ((OnnxTensor) output).getFloatBuffer().array();
-
-                // Calculate sequence length and embedding dimension
-                int sequenceLength = 256;
-                int embeddingDim = flatArray.length / sequenceLength;
-
-                // Reshape flat output [sequenceLength * embeddingDim] -> 2D [sequenceLength][embeddingDim]
-                float[][] tokenEmbeddings = new float[sequenceLength][embeddingDim];
-                for (int i = 0; i < sequenceLength; i++) {
-                    System.arraycopy(flatArray, i * embeddingDim, tokenEmbeddings[i], 0, embeddingDim);
-                }
-
-                // Apply mean pooling over tokens, considering attention mask
-                float[] pooled = meanPooling(tokenEmbeddings, attentionMask);
-
-                // Return L2 normalized pooled vector
-                return l2Normalize(pooled);
-            }
-        }
+        // Step 6: L2 normalize to unit vector for cosine similarity comparisons
+        return l2Normalize(pooled);
     }
 
     /**
@@ -149,97 +122,30 @@ public class EmbeddingService {
      * Skips special tokens ([CLS], [SEP]) and padding. Returns a list of word vectors aligned to token spans.
      */
     public List<WordEmbedding> getWordEmbeddings(String sentence, boolean aggregateSubwords) throws OrtException {
+        // Step 1: Tokenize the input sentence
         Encoding encoding = tokenizer.encode(sentence);
 
+        // Step 2: Prepare input arrays with fixed sequence length
         long[] attentionMask = padOrTruncate(encoding.getAttentionMask(), 256);
         long[] inputIds = padOrTruncate(encoding.getIds(), 256);
         long[] tokenTypeIds = new long[256];
 
-        long[] inputShape = new long[]{1, 256};
+        // Step 3: Run ONNX inference to get raw token embeddings
+        float[] flatArray = runInference(inputIds, attentionMask, tokenTypeIds);
 
-        try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(inputIds), inputShape);
-             OnnxTensor attentionMaskTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(attentionMask), inputShape);
-             OnnxTensor tokenTypeIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(tokenTypeIds), inputShape)) {
+        // Step 4: Reshape flat array to 2D token embeddings matrix
+        int sequenceLength = 256;
+        int embeddingDim = flatArray.length / sequenceLength;
+        float[][] tokenEmbeddings = extractTokenEmbeddings(flatArray, sequenceLength, embeddingDim);
 
-            Map<String, OnnxTensor> inputs = new HashMap<>();
-            inputs.put("input_ids", inputIdsTensor);
-            inputs.put("attention_mask", attentionMaskTensor);
-            inputs.put("token_type_ids", tokenTypeIdsTensor);
+        // Step 5: Get token strings and determine valid token range
+        String[] tokens = encoding.getTokens();
+        int validCount = 0;
+        for (long v : attentionMask) if (v == 1) validCount++;
+        int lastValidIndex = Math.max(0, validCount - 1); // Position of [SEP] token
 
-            try (OrtSession.Result result = session.run(inputs)) {
-                OnnxValue output = result.get(0);
-                float[] flatArray = ((OnnxTensor) output).getFloatBuffer().array();
-
-                int sequenceLength = 256;
-                int embeddingDim = flatArray.length / sequenceLength;
-
-                float[][] tokenEmbeddings = new float[sequenceLength][embeddingDim];
-                for (int i = 0; i < sequenceLength; i++) {
-                    System.arraycopy(flatArray, i * embeddingDim, tokenEmbeddings[i], 0, embeddingDim);
-                }
-
-                // tokens including special tokens
-                String[] tokens = encoding.getTokens();
-                int validCount = 0;
-                for (long v : attentionMask) if (v == 1) validCount++;
-                int lastValidIndex = Math.max(0, validCount - 1); // likely SEP
-
-                List<WordEmbedding> words = new ArrayList<>();
-
-                int i = 1; // skip CLS at 0
-                StringBuilder currentWord = new StringBuilder();
-                List<int[]> spans = new ArrayList<>(); // temp spans for ranges
-                int wordStart = -1;
-
-                while (i < lastValidIndex && i < tokens.length) {
-                    String tok = tokens[i];
-                    boolean isSub = tok.startsWith("##");
-
-                    String piece = isSub ? tok.substring(2) : tok;
-
-                    if (!aggregateSubwords) {
-                        // create one word per token
-                        String w = piece;
-                        float[] vec = l2Normalize(Arrays.copyOf(tokenEmbeddings[i], embeddingDim));
-                        words.add(new WordEmbedding(w, i, i, vec));
-                        i++;
-                        continue;
-                    }
-
-                    if (currentWord.length() == 0) {
-                        currentWord.append(piece);
-                        wordStart = i;
-                    } else if (isSub) {
-                        currentWord.append(piece);
-                    } else {
-                        // flush previous word
-                        spans.add(new int[]{wordStart, i - 1});
-                        currentWord.setLength(0);
-                        currentWord.append(piece);
-                        wordStart = i;
-                    }
-                    i++;
-                }
-
-                // flush tail word if any
-                if (aggregateSubwords && currentWord.length() > 0 && wordStart >= 1) {
-                    spans.add(new int[]{wordStart, Math.min(lastValidIndex - 1, tokens.length - 1)});
-                }
-
-                if (aggregateSubwords) {
-                    for (int[] span : spans) {
-                        int s = span[0];
-                        int e = span[1];
-                        float[] vec = mean(tokenEmbeddings, s, e);
-                        vec = l2Normalize(vec);
-                        String word = reconstructWord(tokens, s, e);
-                        words.add(new WordEmbedding(word, s, e, vec));
-                    }
-                }
-
-                return words;
-            }
-        }
+        // Step 6: Group tokens into words based on aggregation strategy
+        return groupTokensIntoWords(tokens, tokenEmbeddings, embeddingDim, lastValidIndex, aggregateSubwords);
     }
 
     public static class WordEmbedding {
@@ -293,52 +199,64 @@ public class EmbeddingService {
     }
 
     /**
-     * High-level API: find nearest target words for each sentence word.
+     * High-level API: Find semantically similar target words for each word in the sentence.
+     * This is the main entry point for word-level semantic matching.
+     * 
+     * Algorithm:
+     * 1. Extract word-level embeddings from the input sentence
+     * 2. Compute embeddings for all target words (cached for the request)
+     * 3. For each sentence word, compute cosine similarity to all targets
+     * 4. Filter results by threshold and apply stopword/length filters
+     * 5. Return top-K matches per word, sorted by similarity score descending
+     * 
+     * Use cases:
+     * - Topic detection: Find words related to specific themes
+     * - Semantic highlighting: Identify words similar to search terms
+     * - Content categorization: Match document words to category keywords
+     * 
+     * @param sentence input text to analyze
+     * @param targets list of target words/concepts to match against
+     * @param threshold minimum cosine similarity score (0.0-1.0) to include a match
+     *                  Recommended: 0.3-0.4 for word-level matching
+     * @param topK maximum number of target matches to return per word
+     * @param aggregateSubwords if true, merge WordPiece subwords into complete words
+     * @param excludeStopwords if true, skip common stopwords ("the", "and", etc.)
+     * @param minTokenLength minimum word length to consider (e.g., 3 to skip "a", "in")
+     * @return list of WordMatch objects containing words and their nearest target matches
+     * @throws OrtException if ONNX runtime encounters an error during inference
      */
     public List<com.example.springbootapp.dto.WordMatch> matchWords(
             String sentence, List<String> targets, float threshold, int topK, boolean aggregateSubwords,
             boolean excludeStopwords, int minTokenLength) throws OrtException {
 
+        // Step 1: Extract word-level embeddings from the sentence
         List<WordEmbedding> words = getWordEmbeddings(sentence, aggregateSubwords);
 
-        // Precompute target embeddings (pooled sentence embeddings for single words)
-        List<float[]> targetVecs = new ArrayList<>();
-        for (String t : targets) {
-            float[] v = getSentenceEmbedding(t);
-            targetVecs.add(v);
-        }
+        // Step 2: Precompute target embeddings once for all words (optimization)
+        List<float[]> targetVecs = computeTargetEmbeddings(targets);
 
-        List<com.example.springbootapp.dto.WordMatch> out = new ArrayList<>();
-        for (WordEmbedding w : words) {
-            String lw = w.word.toLowerCase();
-            if (excludeStopwords && STOPWORDS.contains(lw)) {
-                continue;
-            }
-            if (minTokenLength > 0 && lw.length() < minTokenLength) {
+        // Step 3: Match each word to targets and build result list
+        List<com.example.springbootapp.dto.WordMatch> results = new ArrayList<>();
+        for (WordEmbedding wordEmb : words) {
+            // Step 4: Apply filtering rules (stopwords, min length)
+            if (shouldSkipWord(wordEmb.word, excludeStopwords, minTokenLength)) {
                 continue;
             }
 
-            List<com.example.springbootapp.dto.TargetScore> scores = new ArrayList<>();
-            for (int i = 0; i < targets.size(); i++) {
-                float s = cosine(w.vector, targetVecs.get(i));
-                if (s >= threshold) {
-                    scores.add(new com.example.springbootapp.dto.TargetScore(targets.get(i), s));
-                }
-            }
-            scores.sort(Comparator.comparing(com.example.springbootapp.dto.TargetScore::getScore).reversed());
-            if (scores.size() > topK) {
-                scores = new ArrayList<>(scores.subList(0, topK));
-            }
+            // Step 5: Compute similarity scores and filter by threshold
+            List<com.example.springbootapp.dto.TargetScore> scores = 
+                computeTargetScores(wordEmb.vector, targets, targetVecs, threshold, topK);
 
-            com.example.springbootapp.dto.WordMatch wm = new com.example.springbootapp.dto.WordMatch();
-            wm.setWord(w.word);
-            wm.setTokenStart(w.tokenStart);
-            wm.setTokenEnd(w.tokenEnd);
-            wm.setMatches(scores);
-            out.add(wm);
+            // Step 6: Build response DTO for this word
+            com.example.springbootapp.dto.WordMatch match = new com.example.springbootapp.dto.WordMatch();
+            match.setWord(wordEmb.word);
+            match.setTokenStart(wordEmb.tokenStart);
+            match.setTokenEnd(wordEmb.tokenEnd);
+            match.setMatches(scores);
+            results.add(match);
         }
 
-        return out;
+        return results;
     }
 
     /**
@@ -434,18 +352,245 @@ public class EmbeddingService {
         return result;
     }
 
+    // ============================================================================
+    // NEW EXTRACTED HELPER METHODS - WELL-DOCUMENTED AND FOCUSED
+    // ============================================================================
+
+    /**
+     * Run ONNX inference with the MiniLM model to get raw token embeddings.
+     * This method encapsulates all ONNX tensor creation, session execution, and output extraction.
+     * 
+     * @param inputIds padded token ID array [256]
+     * @param attentionMask padded attention mask array [256]
+     * @param tokenTypeIds token type IDs array [256], typically all zeros for single sentences
+     * @return flat float array containing all token embeddings [256 * 384 = 98304 elements]
+     * @throws OrtException if ONNX runtime encounters an error
+     */
+    private float[] runInference(long[] inputIds, long[] attentionMask, long[] tokenTypeIds) throws OrtException {
+        // Define input tensor shape: batch size 1, sequence length 256
+        long[] inputShape = new long[]{1, 256};
+
+        // Create ONNX tensors using LongBuffer for efficient memory usage
+        try (OnnxTensor inputIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(inputIds), inputShape);
+             OnnxTensor attentionMaskTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(attentionMask), inputShape);
+             OnnxTensor tokenTypeIdsTensor = OnnxTensor.createTensor(env, LongBuffer.wrap(tokenTypeIds), inputShape)) {
+
+            // Map input names to tensors as expected by the BERT/MiniLM ONNX model
+            Map<String, OnnxTensor> inputs = new HashMap<>();
+            inputs.put("input_ids", inputIdsTensor);
+            inputs.put("attention_mask", attentionMaskTensor);
+            inputs.put("token_type_ids", tokenTypeIdsTensor);
+
+            // Run inference and get output tensor
+            try (OrtSession.Result result = session.run(inputs)) {
+                OnnxValue output = result.get(0); // First output contains token embeddings
+                
+                // Extract flat float array from the output tensor's FloatBuffer
+                return ((OnnxTensor) output).getFloatBuffer().array();
+            }
+        }
+    }
+
+    /**
+     * Extract and reshape token embeddings from flat ONNX output array to 2D matrix.
+     * ONNX returns embeddings as a flat 1D array; this method converts it to [tokens][dimensions].
+     * 
+     * @param flatArray flat array from ONNX output [sequenceLength * embeddingDim]
+     * @param sequenceLength number of tokens (256)
+     * @param embeddingDim embedding dimension per token (384 for MiniLM)
+     * @return 2D array of token embeddings [sequenceLength][embeddingDim]
+     */
+    private float[][] extractTokenEmbeddings(float[] flatArray, int sequenceLength, int embeddingDim) {
+        float[][] tokenEmbeddings = new float[sequenceLength][embeddingDim];
+        
+        // Reshape: flat[i*dim : (i+1)*dim] -> tokenEmbeddings[i][:]
+        for (int i = 0; i < sequenceLength; i++) {
+            System.arraycopy(flatArray, i * embeddingDim, tokenEmbeddings[i], 0, embeddingDim);
+        }
+        
+        return tokenEmbeddings;
+    }
+
+    /**
+     * Group WordPiece tokens into complete words and compute word embeddings.
+     * This method implements the core logic for reconstructing words from subword tokens.
+     * 
+     * WordPiece tokenization strategy:
+     * - Tokens starting with \"##\" are continuations of the previous token
+     * - Example: \"playing\" -> [\"play\", \"##ing\"]
+     * 
+     * @param tokens array of token strings from the tokenizer
+     * @param tokenEmbeddings 2D array of token-level embeddings
+     * @param embeddingDim dimension of embedding vectors
+     * @param lastValidIndex index of the [SEP] token (exclusive upper bound)
+     * @param aggregateSubwords if true, merge subwords; if false, one word per token
+     * @return list of WordEmbedding objects with reconstructed words and their embeddings
+     */
+    private List<WordEmbedding> groupTokensIntoWords(String[] tokens, float[][] tokenEmbeddings, 
+                                                     int embeddingDim, int lastValidIndex, 
+                                                     boolean aggregateSubwords) {
+        List<WordEmbedding> words = new ArrayList<>();
+
+        if (!aggregateSubwords) {
+            // Simple mode: treat each token as a separate word
+            for (int i = 1; i < lastValidIndex && i < tokens.length; i++) { // Skip [CLS] at index 0
+                String tok = tokens[i];
+                String piece = tok.startsWith("##") ? tok.substring(2) : tok;
+                float[] vec = l2Normalize(Arrays.copyOf(tokenEmbeddings[i], embeddingDim));
+                words.add(new WordEmbedding(piece, i, i, vec));
+            }
+            return words;
+        }
+
+        // Complex mode: aggregate WordPiece subwords into complete words
+        List<int[]> spans = new ArrayList<>(); // Track [start, end] ranges for each word
+        StringBuilder currentWord = new StringBuilder();
+        int wordStart = -1;
+        int i = 1; // Start after [CLS] at index 0
+
+        // Scan tokens and group into words based on "##" prefix
+        while (i < lastValidIndex && i < tokens.length) {
+            String tok = tokens[i];
+            boolean isContinuation = tok.startsWith("##");
+            String piece = isContinuation ? tok.substring(2) : tok;
+
+            if (currentWord.length() == 0) {
+                // Start a new word
+                currentWord.append(piece);
+                wordStart = i;
+            } else if (isContinuation) {
+                // Continue current word
+                currentWord.append(piece);
+            } else {
+                // Flush previous word and start new one
+                spans.add(new int[]{wordStart, i - 1});
+                currentWord.setLength(0);
+                currentWord.append(piece);
+                wordStart = i;
+            }
+            i++;
+        }
+
+        // Flush final word if any
+        if (currentWord.length() > 0 && wordStart >= 1) {
+            spans.add(new int[]{wordStart, Math.min(lastValidIndex - 1, tokens.length - 1)});
+        }
+
+        // Compute word embeddings by averaging token embeddings in each span
+        for (int[] span : spans) {
+            int start = span[0];
+            int end = span[1];
+            
+            // Average token embeddings across the span
+            float[] wordVec = mean(tokenEmbeddings, start, end);
+            wordVec = l2Normalize(wordVec);
+            
+            // Reconstruct word text from tokens
+            String word = reconstructWord(tokens, start, end);
+            
+            words.add(new WordEmbedding(word, start, end, wordVec));
+        }
+
+        return words;
+    }
+
+    /**
+     * Compute embeddings for all target words.
+     * This method batches target embedding computation for efficiency.
+     * 
+     * @param targets list of target word strings
+     * @return list of L2-normalized embedding vectors, one per target
+     * @throws OrtException if ONNX runtime encounters an error
+     */
+    private List<float[]> computeTargetEmbeddings(List<String> targets) throws OrtException {
+        List<float[]> targetVecs = new ArrayList<>();
+        
+        // Compute sentence embedding for each target word
+        // Note: For single words, getSentenceEmbedding effectively computes word embedding
+        for (String target : targets) {
+            float[] vec = getSentenceEmbedding(target);
+            targetVecs.add(vec);
+        }
+        
+        return targetVecs;
+    }
+
+    /**
+     * Determine if a word should be skipped based on filtering criteria.
+     * 
+     * @param word the word text to check
+     * @param excludeStopwords if true, filter out common stopwords
+     * @param minTokenLength minimum word length threshold (0 = no minimum)
+     * @return true if word should be skipped, false if it should be included
+     */
+    private boolean shouldSkipWord(String word, boolean excludeStopwords, int minTokenLength) {
+        String lowerWord = word.toLowerCase();
+        
+        // Check stopword filter
+        if (excludeStopwords && STOPWORDS.contains(lowerWord)) {
+            return true;
+        }
+        
+        // Check minimum length filter
+        if (minTokenLength > 0 && lowerWord.length() < minTokenLength) {
+            return true;
+        }
+        
+        return false;
+    }
+
+    /**
+     * Compute similarity scores between a word embedding and all target embeddings.
+     * Filters by threshold and returns top-K matches sorted by score descending.
+     * 
+     * @param wordVector the word's embedding vector
+     * @param targets list of target word strings (for labels)
+     * @param targetVecs list of target embedding vectors (parallel to targets)
+     * @param threshold minimum cosine similarity to include in results
+     * @param topK maximum number of results to return
+     * @return list of TargetScore objects, sorted by score descending, limited to topK
+     */
+    private List<com.example.springbootapp.dto.TargetScore> computeTargetScores(
+            float[] wordVector, List<String> targets, List<float[]> targetVecs, 
+            float threshold, int topK) {
+        
+        List<com.example.springbootapp.dto.TargetScore> scores = new ArrayList<>();
+        
+        // Compute cosine similarity to each target
+        for (int i = 0; i < targets.size(); i++) {
+            float similarity = cosine(wordVector, targetVecs.get(i));
+            
+            // Filter by threshold
+            if (similarity >= threshold) {
+                scores.add(new com.example.springbootapp.dto.TargetScore(targets.get(i), similarity));
+            }
+        }
+        
+        // Sort by score descending (highest similarity first)
+        scores.sort(Comparator.comparing(com.example.springbootapp.dto.TargetScore::getScore).reversed());
+        
+        // Limit to top-K results
+        if (scores.size() > topK) {
+            scores = new ArrayList<>(scores.subList(0, topK));
+        }
+        
+        return scores;
+    }
+
     /**
      * Main method to test encoding and embedding generation.
+     * Useful for debugging and standalone testing of the embedding service.
      */
     public static void main(String[] args) throws Exception {
         EmbeddingService service = new EmbeddingService();
 
         String sentence = "Hello, how are you?";
-        // Generate embedding vector
+        
+        // Generate sentence embedding
         float[] embedding = service.getSentenceEmbedding(sentence);
         System.out.println("Embedding vector length: " + embedding.length);
 
-        // Demonstrate encode-decode
+        // Demonstrate tokenization encode-decode
         service.exampleEncodeDecode(sentence);
     }
 }
