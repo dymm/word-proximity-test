@@ -77,3 +77,15 @@ Content-Type: application/json
   "threshold": 0.55,
   "topK": 3
 }
+
+### Cache Statistics
+GET {{baseUrl}}/api/embedding/cache-stats
+
+### Access Frequencies
+GET {{baseUrl}}/api/embedding/access-frequencies
+
+### Clear All Caches
+POST {{baseUrl}}/api/embedding/clear-cache
+
+### Clear Sentence Cache Only
+POST {{baseUrl}}/api/embedding/clear-sentence-cache

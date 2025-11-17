@@ -4,11 +4,15 @@ import com.example.springbootapp.dto.EmbeddingRequest;
 import com.example.springbootapp.dto.EmbeddingResponse;
 import com.example.springbootapp.dto.WordMatchRequest;
 import com.example.springbootapp.dto.WordMatchResponse;
+import com.example.springbootapp.service.CachedEmbeddingService;
 import com.example.springbootapp.service.EmbeddingService;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.boot.autoconfigure.condition.ConditionalOnBean;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+
+import java.util.Map;
 
 @RestController
 @RequestMapping("/api/embedding")
@@ -16,10 +20,16 @@ import org.springframework.web.bind.annotation.*;
 public class EmbeddingController {
 
     private final EmbeddingService embeddingService;
+    private final CachedEmbeddingService cachedService;
 
     @Autowired
-    public EmbeddingController(EmbeddingService embeddingService) {
+    public EmbeddingController(
+            @Qualifier("cachedEmbeddingService") EmbeddingService embeddingService) {
         this.embeddingService = embeddingService;
+        // Cast to CachedEmbeddingService for cache management methods
+        this.cachedService = embeddingService instanceof CachedEmbeddingService 
+                ? (CachedEmbeddingService) embeddingService 
+                : null;
     }
 
     /**
@@ -95,7 +105,7 @@ public class EmbeddingController {
             int topK = request.getTopK() != null ? request.getTopK() : 3;
             boolean aggregateSubwords = request.getAggregateSubwords() != null ? request.getAggregateSubwords() : true;
 
-            var matches = embeddingService.matchWords(
+            var matches = cachedService.matchWords(
                     request.getSentence(), request.getTargets(), threshold, topK, aggregateSubwords,
                     request.getExcludeStopwords() != null ? request.getExcludeStopwords() : true,
                     request.getMinTokenLength() != null ? request.getMinTokenLength() : 3);
@@ -107,5 +117,58 @@ public class EmbeddingController {
         } catch (Exception e) {
             return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
         }
+    }
+
+    /**
+     * Get cache statistics for monitoring performance.
+     * Example: GET /api/embedding/cache-stats
+     * Returns: { "maxSize": 1000, "currentSize": 42, "hitRate": "87.50%", ... }
+     */
+    @GetMapping("/cache-stats")
+    public ResponseEntity<?> getCacheStats() {
+        if (cachedService == null) {
+            return ResponseEntity.ok(Map.of("message", "Caching not enabled"));
+        }
+        return ResponseEntity.ok(cachedService.getCacheStats());
+    }
+
+    /**
+     * Get access frequency statistics for cached sentences.
+     * Example: GET /api/embedding/access-frequencies
+     * Returns: { "hello world": 15, "test sentence": 8, ... }
+     */
+    @GetMapping("/access-frequencies")
+    public ResponseEntity<?> getAccessFrequencies() {
+        if (cachedService == null) {
+            return ResponseEntity.ok(Map.of("message", "Caching not enabled"));
+        }
+        return ResponseEntity.ok(cachedService.getAccessFrequencies());
+    }
+
+    /**
+     * Clear all caches (sentence and target embeddings).
+     * Example: POST /api/embedding/clear-cache
+     */
+    @PostMapping("/clear-cache")
+    public ResponseEntity<?> clearCache() {
+        if (cachedService != null) {
+            cachedService.clearAllCaches();
+            return ResponseEntity.ok(Map.of("message", "All caches cleared"));
+        }
+        embeddingService.clearTargetCache();
+        return ResponseEntity.ok(Map.of("message", "Target cache cleared"));
+    }
+
+    /**
+     * Clear only the sentence cache, keeping target cache.
+     * Example: POST /api/embedding/clear-sentence-cache
+     */
+    @PostMapping("/clear-sentence-cache")
+    public ResponseEntity<?> clearSentenceCache() {
+        if (cachedService == null) {
+            return ResponseEntity.ok(Map.of("message", "Sentence caching not enabled"));
+        }
+        cachedService.clearSentenceCache();
+        return ResponseEntity.ok(Map.of("message", "Sentence cache cleared"));
     }
 }

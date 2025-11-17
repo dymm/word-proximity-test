@@ -617,21 +617,4 @@ public class EmbeddingService {
         
         return scores;
     }
-
-    /**
-     * Main method to test encoding and embedding generation.
-     * Useful for debugging and standalone testing of the embedding service.
-     */
-    public static void main(String[] args) throws Exception {
-        EmbeddingService service = new EmbeddingService();
-
-        String sentence = "Hello, how are you?";
-        
-        // Generate sentence embedding
-        float[] embedding = service.getSentenceEmbedding(sentence);
-        System.out.println("Embedding vector length: " + embedding.length);
-
-        // Demonstrate tokenization encode-decode
-        service.exampleEncodeDecode(sentence);
-    }
 }
