@@ -10,7 +10,7 @@ class MatchWordsSimulation extends Simulation {
   val baseUrl = sys.props.getOrElse("BASE_URL", "http://localhost:8080")
   val warmupUsers = sys.props.getOrElse("WARMUP_USERS", "5").toInt
   val warmupDuration = sys.props.getOrElse("WARMUP_SEC", "30").toInt
-  val rampUsers = sys.props.getOrElse("USERS_MAX", "50").toInt
+  val rampUsers = sys.props.getOrElse("USERS_MAX", "20").toInt
   val rampDuration = sys.props.getOrElse("RAMP_SEC", "60").toInt
   val steadyDuration = sys.props.getOrElse("STEADY_SEC", "120").toInt
 

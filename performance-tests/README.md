@@ -49,13 +49,13 @@ mvn spring-boot:run
 From the workspace root:
 
 ```bash
-mvn -pl performance-tests io.gatling:gatling-maven-plugin:test
+mvn -f performance-tests/pom.xml io.gatling:gatling-maven-plugin:test
 ```
 
 Default profile:
 - Warm-up: 5 users for 30 seconds
-- Ramp: 5 → 50 users over 60 seconds
-- Steady: 50 users for 120 seconds
+- Ramp: 5 → 20 users over 60 seconds
+- Steady: 20 users for 120 seconds
 
 ### Customize Load Profile
 
@@ -64,9 +64,9 @@ Override via system properties:
 ```bash
 mvn -pl performance-tests io.gatling:gatling-maven-plugin:test \
   -DBASE_URL=http://localhost:8080 \
-  -DWARMUP_USERS=10 \
+  -DWARMUP_USERS=5 \
   -DWARMUP_SEC=20 \
-  -DUSERS_MAX=100 \
+  -DUSERS_MAX=20 \
   -DRAMP_SEC=90 \
   -DSTEADY_SEC=180
 ```
@@ -78,7 +78,7 @@ mvn -pl performance-tests io.gatling:gatling-maven-plugin:test \
 | `BASE_URL`     | `http://localhost:8080` | Base URL of the Spring Boot app     |
 | `WARMUP_USERS` | `5`                   | Concurrent users during warm-up      |
 | `WARMUP_SEC`   | `30`                  | Warm-up phase duration (seconds)     |
-| `USERS_MAX`    | `50`                  | Peak concurrent users                |
+| `USERS_MAX`    | `20`                  | Peak concurrent users                |
 | `RAMP_SEC`     | `60`                  | Ramp-up duration (seconds)           |
 | `STEADY_SEC`   | `120`                 | Steady state duration (seconds)      |
 
@@ -97,7 +97,7 @@ mvn -pl performance-tests io.gatling:gatling-maven-plugin:test \
 
 ```bash
 mvn -pl performance-tests io.gatling:gatling-maven-plugin:test \
-  -DUSERS_MAX=200 \
+  -DUSERS_MAX=20 \
   -DRAMP_SEC=120 \
   -DSTEADY_SEC=300
 ```

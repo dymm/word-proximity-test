@@ -20,6 +20,7 @@ import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Service
 @ConditionalOnProperty(name = "embedding.enabled", havingValue = "true", matchIfMissing = false)
@@ -29,6 +30,13 @@ public class EmbeddingService {
     private final OrtEnvironment env;
     private final OrtSession session;
     private final HuggingFaceTokenizer tokenizer;
+    
+    /**
+     * Cache for target word embeddings to avoid recomputation across requests.
+     * Key: target word (lowercase), Value: L2-normalized embedding vector
+     * Thread-safe for concurrent access.
+     */
+    private final Map<String, float[]> targetEmbeddingCache = new ConcurrentHashMap<>();
 
     private static final Set<String> STOPWORDS = Set.of(
             "a","an","the","and","or","but","if","then","else","when",
@@ -495,8 +503,13 @@ public class EmbeddingService {
     }
 
     /**
-     * Compute embeddings for all target words.
-     * This method batches target embedding computation for efficiency.
+     * Compute embeddings for all target words with caching optimization.
+     * Uses a thread-safe cache to avoid recomputing embeddings for frequently used targets.
+     * Cache keys are case-insensitive (lowercase) for better hit rate.
+     * 
+     * Performance impact:
+     * - Cache hit: O(1) lookup, no ONNX inference
+     * - Cache miss: O(1) lookup + ONNX inference + cache store
      * 
      * @param targets list of target word strings
      * @return list of L2-normalized embedding vectors, one per target
@@ -505,14 +518,42 @@ public class EmbeddingService {
     private List<float[]> computeTargetEmbeddings(List<String> targets) throws OrtException {
         List<float[]> targetVecs = new ArrayList<>();
         
-        // Compute sentence embedding for each target word
-        // Note: For single words, getSentenceEmbedding effectively computes word embedding
+        // Compute or retrieve cached embedding for each target word
         for (String target : targets) {
-            float[] vec = getSentenceEmbedding(target);
+            // Normalize to lowercase for cache key consistency
+            String cacheKey = target.toLowerCase();
+            
+            // Try cache first
+            float[] vec = targetEmbeddingCache.get(cacheKey);
+            
+            if (vec == null) {
+                // Cache miss: compute embedding and store in cache
+                vec = getSentenceEmbedding(target);
+                targetEmbeddingCache.put(cacheKey, vec);
+            }
+            
             targetVecs.add(vec);
         }
         
         return targetVecs;
+    }
+    
+    /**
+     * Clear the target embedding cache. Useful for testing or memory management.
+     * Thread-safe operation.
+     */
+    public void clearTargetCache() {
+        targetEmbeddingCache.clear();
+    }
+    
+    /**
+     * Get the current size of the target embedding cache.
+     * Useful for monitoring and debugging cache effectiveness.
+     * 
+     * @return number of cached target embeddings
+     */
+    public int getTargetCacheSize() {
+        return targetEmbeddingCache.size();
     }
 
     /**
